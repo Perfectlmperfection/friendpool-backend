@@ -249,6 +249,117 @@ app.post('/api/webhooks/stripe', express.raw({type: 'application/json'}), async 
   res.json({ received: true });
 });
 
+// ==================== EMAIL VERIFICATION ====================
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+console.log('Resend API Key loaded:', RESEND_API_KEY ? 'YES' : 'NO');
+
+// Debug endpoint to check if code is updated
+app.get('/api/debug', (req, res) => {
+  res.json({
+    status: 'ok',
+    resendLoaded: !!RESEND_API_KEY,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Store verification codes in memory (for demo - use database in production)
+const verificationCodes = new Map();
+
+app.post('/api/auth/send-verification', async (req, res) => {
+  try {
+    const { email, name, code } = req.body;
+    
+    if (!email || !code) {
+      return res.status(400).json({ success: false, error: 'Email and code required' });
+    }
+
+    // Store the code
+    verificationCodes.set(email, {
+      code: code,
+      expires: Date.now() + 15 * 60 * 1000 // 15 minutes
+    });
+
+    // Send email via Resend
+    if (RESEND_API_KEY) {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${RESEND_API_KEY}`
+        },
+        body: JSON.stringify({
+          from: 'FriendPool <onboarding@resend.dev>',
+          to: email,
+          subject: 'Your FriendPool Verification Code',
+          html: `
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; padding: 20px;">
+              <div style="max-width: 500px; margin: 0 auto; background: #f5f5f5; padding: 30px; border-radius: 10px;">
+                <h2 style="color: #1a73e8; text-align: center;">FriendPool</h2>
+                <p>Hi ${name || 'there'},</p>
+                <p>Your verification code is:</p>
+                <div style="background: white; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+                  <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1a73e8;">${code}</span>
+                </div>
+                <p style="color: #666; font-size: 14px;">This code expires in 15 minutes.</p>
+                <p style="color: #666; font-size: 12px;">If you didn't create a FriendPool account, please ignore this email.</p>
+              </div>
+            </body>
+            </html>
+          `
+        })
+      });
+
+      if (response.ok) {
+        console.log('Verification email sent to:', email);
+        return res.json({ success: true, message: 'Email sent' });
+      } else {
+        const error = await response.text();
+        console.log('Resend error:', error);
+        return res.json({ success: true, message: 'Code generated (email failed)' });
+      }
+    } else {
+      console.log('RESEND_API_KEY not configured, skipping email send');
+      return res.json({ success: true, message: 'Code generated' });
+    }
+  } catch (error) {
+    console.error('Verification error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/auth/verify-code', (req, res) => {
+  try {
+    const { email, code } = req.body;
+    
+    if (!email || !code) {
+      return res.status(400).json({ success: false, error: 'Email and code required' });
+    }
+
+    const stored = verificationCodes.get(email);
+    
+    if (!stored) {
+      return res.json({ success: false, error: 'No verification code found' });
+    }
+
+    if (Date.now() > stored.expires) {
+      verificationCodes.delete(email);
+      return res.json({ success: false, error: 'Code expired' });
+    }
+
+    if (stored.code !== code) {
+      return res.json({ success: false, error: 'Invalid code' });
+    }
+
+    verificationCodes.delete(email);
+    return res.json({ success: true, message: 'Email verified' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== HEALTH CHECK ====================
 
 app.get('/api/health', (req, res) => {
