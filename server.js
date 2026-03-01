@@ -289,7 +289,7 @@ app.post('/api/auth/send-verification', async (req, res) => {
           'Authorization': `Bearer ${RESEND_API_KEY}`
         },
         body: JSON.stringify({
-          from: 'FriendPool <onboarding@resend.dev>',
+          from: 'FriendPool <noreply@friendpoolapp.com>',
           to: email,
           subject: 'Your FriendPool Verification Code',
           html: `
